@@ -1,7 +1,11 @@
 package mapreduce
 
 import (
+	"container/list"
+	"encoding/json"
 	"hash/fnv"
+	"io/ioutil"
+	"os"
 )
 
 func doMap(
@@ -53,6 +57,44 @@ func doMap(
 	//
 	// Your code here (Part I).
 	//
+
+	contents, err := ioutil.ReadFile(inFile)
+	if err != nil {
+		panic(err)
+	}
+
+	// a map between intermediate file name & the k-v to be written to that file
+	intermediateMap := make(map[string]*list.List)
+
+	// read k-v pairs using mapF
+	kvs := mapF(inFile, string(contents))
+
+	// for each k-v pair, find its corresponding file, record the mapping
+	// in the intermediateMap
+	for _, kv := range kvs {
+		reducer := ihash(kv.Key) % nReduce
+		intermediateFileName := reduceName(jobName, mapTask, reducer)
+		if currentList, ok := intermediateMap[intermediateFileName]; ok {
+			currentList.PushBack(kv)
+		} else {
+			currentList = list.New()
+			currentList.PushBack(kv)
+			intermediateMap[intermediateFileName] = currentList
+		}
+	}
+
+	// for each intermediate file, write the corresponding k-v pairs to it
+	for fileName, kvList := range intermediateMap {
+		file, err := os.OpenFile(fileName, os.O_CREATE | os.O_WRONLY, 0777)
+		if err != nil {
+			panic(err)
+		}
+		encoder := json.NewEncoder(file)
+		for element := kvList.Front(); element != nil; element = element.Next() {
+			encoder.Encode(element.Value)
+		}
+		file.Close()
+	}
 }
 
 func ihash(s string) int {
