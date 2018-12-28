@@ -1,5 +1,12 @@
 package mapreduce
 
+import (
+	"bufio"
+	"encoding/json"
+	"os"
+	"sort"
+)
+
 func doReduce(
 	jobName string, // the name of the whole MapReduce job
 	reduceTask int, // which reduce task this is
@@ -44,4 +51,56 @@ func doReduce(
 	//
 	// Your code here (Part I).
 	//
+
+	reduceMap := make(map[string][]string)
+
+	// for each intermediate mapper file, read all k-v pairs from it
+	for i := 0;i < nMap;i++ {
+		fileName := reduceName(jobName, i, reduceTask)
+		file, err := os.Open(fileName)
+		if err != nil {
+			panic(err)
+		}
+		reader := bufio.NewReader(file)
+		for {
+			line, err := reader.ReadString('\n')	// read k-v pair line by line
+			if err != nil {
+				break
+			}
+			kv := KeyValue{}
+			json.Unmarshal([]byte(line), &kv)
+			key := kv.Key
+			value := kv.Value
+
+			// collect values by key
+			if values, ok := reduceMap[key]; ok {
+				reduceMap[key] = append(values, value)
+			} else {
+				reduceMap[key] = make([]string, 0, 0)
+				reduceMap[key] = append(reduceMap[key], value)
+			}
+		}
+		file.Close()
+	}
+
+	// sort by key
+	keys := make([]string, 0, len(reduceMap))
+	for k := range reduceMap {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return keys[i] < keys[j]
+	})
+
+	// write to output file
+	out, err := os.OpenFile(outFile, os.O_CREATE | os.O_RDWR, 0777)
+	defer out.Close()
+	if err != nil {
+		panic(err)
+	}
+	encoder := json.NewEncoder(out)
+	for _, key := range keys {
+		reduceResult := reduceF(key, reduceMap[key])
+		encoder.Encode(KeyValue{Key: key, Value:reduceResult})
+	}
 }
