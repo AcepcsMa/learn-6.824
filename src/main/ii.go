@@ -14,6 +14,7 @@ func removeDuplicate(terms []string) []string {
 	result := make([]string, 0, len(terms))
 	for _, term := range terms {
 		if _, ok := dict[term]; !ok {
+			dict[term] = struct{}{}
 			result = append(result, term)
 		}
 	}
@@ -44,6 +45,14 @@ func mapF(document string, value string) (res []mapreduce.KeyValue) {
 // should be a single output value for that key.
 func reduceF(key string, values []string) string {
 	// Your code here (Part V).
+	values = removeDuplicate(values)
+	numDoc := len(values)
+	docs := ""
+
+	for _, value := range values {
+		docs += fmt.Sprintf("%s,", value)
+	}
+	return fmt.Sprintf("%d %s", numDoc, docs[:len(docs) - 1])
 }
 
 // Can be run in 3 ways:
