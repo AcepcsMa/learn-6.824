@@ -52,9 +52,9 @@ func schedule(jobName string, mapFiles []string, nReduce int, phase jobPhase, re
 				case workerAddr := <- registerChan:
 					if call(workerAddr, "Worker.DoTask", args, nil) == true {
 						wg.Done()
-						registerChan <- workerAddr	// return that worker to the queue, in order to reuse it
 						done <- true
 					}
+					registerChan <- workerAddr	// return that worker to the queue, in order to reuse it
 				default:
 				}
 
@@ -62,7 +62,7 @@ func schedule(jobName string, mapFiles []string, nReduce int, phase jobPhase, re
 				case <- done:
 					return
 				default:
-					fmt.Printf("waiting for the task-%d being done\n", taskId)
+					//fmt.Printf("waiting for the task-%d being done\n", taskId)
 				}
 			}
 		}(i)
