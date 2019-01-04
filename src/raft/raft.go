@@ -199,6 +199,30 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
+type AppendEntriesArgs struct {
+	TermId int
+	LeaderId int
+	Logs []LogEntry
+	PrevLogIndex int
+	PrevLogTerm int
+	CommitIndex int
+}
+
+type AppendEntriesReply struct {
+	TermId int
+	Success bool
+	ConflictTerm int
+	ConflictIndex int
+}
+
+func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
+	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	return ok
+}
+
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+
+}
 
 //
 // the service using Raft (e.g. a k/v server) wants to start
@@ -270,9 +294,39 @@ func (rf *Raft) TurnToLeaderState() {
 
 }
 
+// send heartbeat to the peer whose id is peerId
+func (rf *Raft) SendHeartBeat(peerId int) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	// TODO: fill in args
+	args := AppendEntriesArgs{}
+	reply := AppendEntriesReply{}
+	rf.sendAppendEntries(peerId, &args, &reply)
+
+	// TODO: deal with the reply
+}
+
 // start heartbeat mechanism, signaling each peer periodically
 func (rf *Raft) StartHeartBeat() {
+	for {
+		if rf.state != LEADER {
+			return
+		}
 
+		select {
+		case <-rf.shutdown:
+			return
+		default:
+			rf.resetElection <- struct{}{}	// send heartbeat to itself
+			peerCount := len(rf.peers)
+			for i := 0;i < peerCount;i++ {
+				if i != rf.me {
+					go rf.SendHeartBeat(i)	// send heartbeat to other peers
+				}
+			}
+		}
+	}
 }
 
 func (rf *Raft) DealWithRequestVote(reply *RequestVoteReply) {
