@@ -33,6 +33,12 @@ const (
 	FOLLOWER
 )
 
+// log entry entity <term, cmd>
+type LogEntry struct {
+	TermId int
+	Command interface{}
+}
+
 //
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -62,18 +68,19 @@ type Raft struct {
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
-	state int					  // Candidate, Follower or Leader
-	voteFor int					  // which peer it votes for
+	state 	  int					  // Candidate, Follower or Leader
+	voteFor   int					  // which peer it votes for
 	voteCount int				  // how many votes it receives in an election
 
-	electionTimer time.Timer	  // recording the election timeout
+	electionTimer 	time.Timer	  // recording the election timeout
 	electionTimeout time.Duration	// election timeout
-	resetElection chan struct{}	  // a channel responsible for resetting the election timer
-	shutdown chan struct{}		  // a channel receiving the shutdown signal
+	resetElection 	chan struct{}	  // a channel responsible for resetting the election timer
+	shutdown 		chan struct{}		  // a channel receiving the shutdown signal
 
 	CurrentTerm int
-
-
+	LogEntries  []LogEntry
+	MatchIndex  []int
+	NextIndex   []int
 }
 
 // return currentTerm and whether this server
@@ -232,29 +239,62 @@ func (rf *Raft) GetLastLogInfo() (int, int) {
 	return 0, 0
 }
 
-func (rf *Raft) TurnToFollower() {
+// turn itself to be a follower
+func (rf *Raft) TurnToFollowerState(latestTerm int) {
+	rf.CurrentTerm = latestTerm
+	rf.state = FOLLOWER
+	rf.persist()
+	rf.resetElection <- struct{}{}
+}
+
+// turn itself to be a leader
+func (rf *Raft) TurnToLeaderState() {
+	rf.state = LEADER
+	rf.voteCount = 0
+
+	// initialize matchIndex & nextIndex
+	peerCount := len(rf.peers)
+	logCount := len(rf.LogEntries)
+	for i := 0;i < peerCount;i++ {
+		if i == rf.me {
+			rf.MatchIndex[i] = logCount - 1
+		} else {
+			rf.MatchIndex[i] = 0
+		}
+		rf.NextIndex[i] = logCount
+	}
+
+	go rf.StartHeartBeat()
+	rf.persist()
+	rf.resetElection <- struct{}{}
 
 }
 
-func (rf *Raft) TurnToLeader() {
+// start heartbeat mechanism, signaling each peer periodically
+func (rf *Raft) StartHeartBeat() {
 
 }
 
-func (rf *Raft) DealWithVote(reply *RequestVoteReply) {
+func (rf *Raft) DealWithRequestVote(reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
 	if rf.state == CANDIDATE {
 		if reply.TermId > rf.CurrentTerm {
-			// TODO: turn to follower
+			rf.TurnToFollowerState(reply.TermId)
 		} else if reply.VoteFor == rf.me {
-			// TODO: collect vote
-			// TODO: determine if it's valid to be a leader
+			rf.voteCount++
+			if rf.voteCount > len(rf.peers) / 2 {
+				rf.TurnToLeaderState()
+			}
 		}
 	}
 }
 
 func (rf *Raft) BringUpElection() {
+	if rf.state != FOLLOWER {
+		return
+	}
 	rf.mu.Lock()
 	rf.CurrentTerm += 1
 	rf.state = CANDIDATE
@@ -268,12 +308,13 @@ func (rf *Raft) BringUpElection() {
 	}
 	rf.mu.Unlock()
 
+	rf.voteCount = 1	// vote for itself
 	for i := 0;i < len(rf.peers);i++ {
 		if i != rf.me {
 			reply := RequestVoteReply{}
 			go func(peerId int) {
 				rf.sendRequestVote(peerId, &arg, &reply)
-				// TODO: deal with the reply
+				rf.DealWithRequestVote(&reply)
 			}(i)
 		}
 	}
