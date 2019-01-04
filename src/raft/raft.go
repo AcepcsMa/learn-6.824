@@ -62,8 +62,9 @@ type Raft struct {
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
-	state int
-	voteFor int
+	state int					  // Candidate, Follower or Leader
+	voteFor int					  // which peer it votes for
+	voteCount int				  // how many votes it receives in an election
 
 	electionTimer time.Timer	  // recording the election timeout
 	electionTimeout time.Duration	// election timeout
@@ -229,6 +230,28 @@ func (rf *Raft) Kill() {
 
 func (rf *Raft) GetLastLogInfo() (int, int) {
 	return 0, 0
+}
+
+func (rf *Raft) TurnToFollower() {
+
+}
+
+func (rf *Raft) TurnToLeader() {
+
+}
+
+func (rf *Raft) DealWithVote(reply *RequestVoteReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if rf.state == CANDIDATE {
+		if reply.TermId > rf.CurrentTerm {
+			// TODO: turn to follower
+		} else if reply.VoteFor == rf.me {
+			// TODO: collect vote
+			// TODO: determine if it's valid to be a leader
+		}
+	}
 }
 
 func (rf *Raft) BringUpElection() {
