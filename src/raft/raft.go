@@ -17,13 +17,21 @@ package raft
 //   in the same server.
 //
 
-import "sync"
-import "labrpc"
+import (
+	"log"
+	"sync"
+	"time"
+)
+import "../labrpc"
 
 // import "bytes"
 // import "labgob"
 
-
+const (
+	LEADER = iota
+	CANDIDATE
+	FOLLOWER
+)
 
 //
 // as each Raft peer becomes aware that successive log entries are
@@ -54,6 +62,16 @@ type Raft struct {
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
+	state int
+	voteFor int
+
+	electionTimer time.Timer	  // recording the election timeout
+	electionTimeout time.Duration	// election timeout
+	resetElection chan struct{}	  // a channel responsible for resetting the election timer
+	shutdown chan struct{}		  // a channel receiving the shutdown signal
+
+	CurrentTerm int
+
 
 }
 
@@ -116,6 +134,10 @@ func (rf *Raft) readPersist(data []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
+	TermId 			int	// candidate's term id
+	CandidateId 	int	// candidate id
+	LastLogIndex 	int	// index of the candidate's last log
+	LastLogTerm 	int	// term of the candidate's last log
 }
 
 //
@@ -124,6 +146,8 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
+	TermId int
+	VoteFor int
 }
 
 //
@@ -201,6 +225,53 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 //
 func (rf *Raft) Kill() {
 	// Your code here, if desired.
+}
+
+func (rf *Raft) GetLastLogInfo() (int, int) {
+	return 0, 0
+}
+
+func (rf *Raft) BringUpElection() {
+	rf.mu.Lock()
+	rf.CurrentTerm += 1
+	rf.state = CANDIDATE
+	rf.voteFor = rf.me
+	lastLogIndex, lastLogTerm := rf.GetLastLogInfo()
+	arg := RequestVoteArgs{
+		TermId: rf.CurrentTerm,
+		CandidateId: rf.me,
+		LastLogIndex: lastLogIndex,
+		LastLogTerm: lastLogTerm,
+	}
+	rf.mu.Unlock()
+
+	for i := 0;i < len(rf.peers);i++ {
+		if i != rf.me {
+			reply := RequestVoteReply{}
+			go func(peerId int) {
+				rf.sendRequestVote(peerId, &arg, &reply)
+				// TODO: deal with the reply
+			}(i)
+		}
+	}
+}
+
+func (rf *Raft) ElectionDaemon() {
+	for {
+		select {
+		case <-rf.shutdown:
+			log.Println("Shutting down, election daemon ends immediately.")
+			return
+		case <-rf.resetElection:
+			if !rf.electionTimer.Stop() {
+				<- rf.electionTimer.C
+			}
+			rf.electionTimer.Reset(rf.electionTimeout)
+		case <-rf.electionTimer.C:
+			go rf.BringUpElection()
+			rf.electionTimer.Reset(rf.electionTimeout)
+		}
+	}
 }
 
 //
