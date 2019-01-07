@@ -19,6 +19,7 @@ package raft
 
 import (
 	"log"
+	"math/rand"
 	"sync"
 	"time"
 )
@@ -81,6 +82,9 @@ type Raft struct {
 	LogEntries  []LogEntry
 	MatchIndex  []int
 	NextIndex   []int
+	CommitIndex int
+
+	applyCh chan ApplyMsg
 }
 
 // return currentTerm and whether this server
@@ -221,7 +225,10 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
+	rf.resetElection <- struct{}{}
 }
 
 //
@@ -267,6 +274,7 @@ func (rf *Raft) GetLastLogInfo() (int, int) {
 func (rf *Raft) TurnToFollowerState(latestTerm int) {
 	rf.CurrentTerm = latestTerm
 	rf.state = FOLLOWER
+	rf.voteFor = -1
 	rf.persist()
 	rf.resetElection <- struct{}{}
 }
@@ -294,17 +302,33 @@ func (rf *Raft) TurnToLeaderState() {
 
 }
 
+func (rf *Raft) DealWithHeartBeatReply(reply *AppendEntriesReply) {
+
+}
+
 // send heartbeat to the peer whose id is peerId
 func (rf *Raft) SendHeartBeat(peerId int) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
 	// TODO: fill in args
-	args := AppendEntriesArgs{}
-	reply := AppendEntriesReply{}
-	rf.sendAppendEntries(peerId, &args, &reply)
+	prevLogIndex := rf.NextIndex[peerId] - 1
+	args := AppendEntriesArgs{
+		LeaderId: rf.me,
+		TermId: rf.CurrentTerm,
+		Logs: nil,
+		PrevLogIndex: prevLogIndex,
+		PrevLogTerm: rf.LogEntries[prevLogIndex].TermId,
+		CommitIndex: rf.CommitIndex,
+	}
 
-	// TODO: deal with the reply
+	go func() {
+		reply := AppendEntriesReply{}
+		if rf.sendAppendEntries(peerId, &args, &reply) {
+			// TODO: deal with the reply
+			rf.DealWithHeartBeatReply(&reply)
+		}
+	}()
 }
 
 // start heartbeat mechanism, signaling each peer periodically
@@ -409,12 +433,23 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
+	rf.applyCh = applyCh
 
 	// Your initialization code here (2A, 2B, 2C).
+	rf.state = FOLLOWER
+	rf.electionTimeout = time.Millisecond * time.Duration(rand.Intn(300) + 500)	// 500-800ms timeout
+	rf.voteFor = -1
+	rf.resetElection = make(chan struct{})
+	rf.shutdown = make(chan struct{})
+	rf.LogEntries = make([]LogEntry, 0, 0)
+	rf.MatchIndex = make([]int, 0, len(rf.peers))
+	rf.NextIndex = make([]int, 0, len(rf.peers))
+	rf.CommitIndex = -1
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
-
+	// start election daemon
+	go rf.ElectionDaemon()
 	return rf
 }
