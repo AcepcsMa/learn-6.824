@@ -215,7 +215,6 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	TermId int
 	Success bool
-	ConflictTerm int
 	FirstIndex int
 }
 
@@ -228,21 +227,24 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	reply.Success = false
 	// check term issue
 	if args.TermId < rf.CurrentTerm {
-		// stale request
+		// stale leader
 		reply.TermId = rf.CurrentTerm
-		reply.Success = false
-		return
 	} else {
-		// valid request
-		//rf.CurrentTerm = args.TermId
-		if rf.state == LEADER {
-			rf.TurnToFollowerState(args.TermId)
+		rf.TurnToFollowerState(args.TermId)
+		reply.TermId = args.TermId
+
+		lastIndex, lastTerm := rf.GetLastLogIndexAndTerm()
+		if lastIndex < args.PrevLogIndex || lastTerm != args.PrevLogTerm {
+			// TODO: match fails, find matching point
 		} else {
-			rf.CurrentTerm = args.TermId
-			rf.voteFor = args.LeaderId
-			reply.TermId = args.TermId
+			if args.Logs == nil {
+				// TODO: match success, deal with HEART_BEAT
+			} else {
+				// TODO: match success, deal with common APPEND_ENTRIES
+			}
 		}
 	}
 
@@ -284,7 +286,7 @@ func (rf *Raft) Kill() {
 	// Your code here, if desired.
 }
 
-func (rf *Raft) GetLastLogInfo() (int, int) {
+func (rf *Raft) GetLastLogIndexAndTerm() (int, int) {
 	return 0, 0
 }
 
@@ -393,7 +395,7 @@ func (rf *Raft) BringUpElection() {
 	rf.CurrentTerm += 1
 	rf.state = CANDIDATE
 	rf.voteFor = rf.me
-	lastLogIndex, lastLogTerm := rf.GetLastLogInfo()
+	lastLogIndex, lastLogTerm := rf.GetLastLogIndexAndTerm()
 	arg := RequestVoteArgs{
 		TermId: rf.CurrentTerm,
 		CandidateId: rf.me,
