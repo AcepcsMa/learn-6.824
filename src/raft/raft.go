@@ -216,7 +216,7 @@ type AppendEntriesReply struct {
 	TermId int
 	Success bool
 	ConflictTerm int
-	ConflictIndex int
+	FirstIndex int
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
@@ -227,6 +227,24 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+
+	// check term issue
+	if args.TermId < rf.CurrentTerm {
+		// stale request
+		reply.TermId = rf.CurrentTerm
+		reply.Success = false
+		return
+	} else {
+		// valid request
+		//rf.CurrentTerm = args.TermId
+		if rf.state == LEADER {
+			rf.TurnToFollowerState(args.TermId)
+		} else {
+			rf.CurrentTerm = args.TermId
+			rf.voteFor = args.LeaderId
+			reply.TermId = args.TermId
+		}
+	}
 
 	rf.resetElection <- struct{}{}
 }
@@ -283,8 +301,9 @@ func (rf *Raft) TurnToFollowerState(latestTerm int) {
 func (rf *Raft) TurnToLeaderState() {
 	rf.state = LEADER
 	rf.voteCount = 0
+	rf.voteFor = -1
 
-	// initialize matchIndex & nextIndex
+	// initialize matchIndex & nextIndex when it becomes a leader
 	peerCount := len(rf.peers)
 	logCount := len(rf.LogEntries)
 	for i := 0;i < peerCount;i++ {
@@ -299,7 +318,6 @@ func (rf *Raft) TurnToLeaderState() {
 	go rf.StartHeartBeat()
 	rf.persist()
 	rf.resetElection <- struct{}{}
-
 }
 
 func (rf *Raft) DealWithHeartBeatReply(reply *AppendEntriesReply) {
@@ -311,7 +329,6 @@ func (rf *Raft) SendHeartBeat(peerId int) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	// TODO: fill in args
 	prevLogIndex := rf.NextIndex[peerId] - 1
 	args := AppendEntriesArgs{
 		LeaderId: rf.me,
@@ -325,7 +342,6 @@ func (rf *Raft) SendHeartBeat(peerId int) {
 	go func() {
 		reply := AppendEntriesReply{}
 		if rf.sendAppendEntries(peerId, &args, &reply) {
-			// TODO: deal with the reply
 			rf.DealWithHeartBeatReply(&reply)
 		}
 	}()
